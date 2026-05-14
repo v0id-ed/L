@@ -2,7 +2,6 @@ import pygame
 import math
 import sys
 import random
-import time
 
 pygame.init()
 
@@ -14,7 +13,7 @@ clock = pygame.time.Clock()
 font = pygame.font.SysFont(None, 36)
 
 # -----------------------------
-# WORLD SHAPE (MUST BE FIRST)
+# WORLD
 # -----------------------------
 def tunnel(x, y):
     t = math.sin(x * 0.08) * 2 + math.sin(y * 0.05) * 2
@@ -23,10 +22,6 @@ def tunnel(x, y):
 def is_wall(x, y):
     return not tunnel(x, y)
 
-
-# -----------------------------
-# PLAYER
-# -----------------------------
 px, py = 0.0, 0.0
 pa = 0.0
 
@@ -37,57 +32,38 @@ FOV = math.pi / 3
 RAYS = 120
 MAX_DEPTH = 300
 
+wall_depth_buffer = [MAX_DEPTH] * RAYS
 
 # -----------------------------
-# WORLD / L SYSTEM
+# L SYSTEM
 # -----------------------------
 CHUNK_SIZE = 120
 VISIBLE_CHUNKS = 1
 
 L_objects = {}
-wall_depth_buffer = [MAX_DEPTH] * RAYS
 L_count = 0
 
-
 # -----------------------------
-# STALKER SYSTEM
+# STARS / CORRUPTION
 # -----------------------------
-stalker_x, stalker_y = 0, 0
-stalker_speed = 0.45
-
-stalker_lock = False
-glitch_timer = 0
-
-
-def reset_stalker():
-    global stalker_x, stalker_y
-
-    for _ in range(300):
-
-        # 70% far, 30% near
-        if random.random() < 0.7:
-            dist = random.uniform(200, 450)
-        else:
-            dist = random.uniform(40, 120)
-
-        angle = random.uniform(0, math.tau)
-
-        x = px + math.cos(angle) * dist
-        y = py + math.sin(angle) * dist
-
-        if not is_wall(x, y):
-            stalker_x = x
-            stalker_y = y
-            return
-
-    stalker_x, stalker_y = px + 80, py + 80
+stars = []
+star_power = 0.0
+collapse = False
+collapse_timer = 0
+rotation = 0.0
 
 
-reset_stalker()
+def spawn_star():
+    if random.random() < 0.002 + star_power * 0.02:
+        stars.append([
+            random.randint(0, WIDTH),
+            random.randint(0, HEIGHT),
+            random.randint(1, 3)
+        ])
 
 
 # -----------------------------
-# CHUNK SYSTEM
+# CHUNKS
 # -----------------------------
 def get_chunk(x, y):
     return int(x // CHUNK_SIZE), int(y // CHUNK_SIZE)
@@ -95,17 +71,12 @@ def get_chunk(x, y):
 
 def generate_l_in_chunk(cx, cy):
     random.seed(cx * 928371 + cy * 123719)
-
     ls = []
 
-    count = random.choices(
-        [0, 0, 1, 1, 2],
-        weights=[60, 25, 10, 4, 1]
-    )[0]
+    count = random.choices([0, 0, 1, 1, 2], weights=[60, 25, 10, 4, 1])[0]
 
     for _ in range(count):
         for _try in range(10):
-
             lx = cx * CHUNK_SIZE + random.uniform(0, CHUNK_SIZE)
             ly = cy * CHUNK_SIZE + random.uniform(0, CHUNK_SIZE)
 
@@ -125,7 +96,6 @@ def update_Ls():
                          player_chunk[1] + VISIBLE_CHUNKS + 1):
 
             key = (cx, cy)
-
             if key not in L_objects:
                 L_objects[key] = generate_l_in_chunk(cx, cy)
 
@@ -160,18 +130,16 @@ def move():
 
 
 # -----------------------------
-# RAYCAST WORLD
+# RAYCAST
 # -----------------------------
 def cast_world():
-    screen.fill((0, 0, 0))
-
     start_angle = pa - FOV / 2
 
     for ray in range(RAYS):
         angle = start_angle + (ray / RAYS) * FOV
 
-        sin_a = math.sin(angle)
         cos_a = math.cos(angle)
+        sin_a = math.sin(angle)
 
         wall_depth_buffer[ray] = MAX_DEPTH
 
@@ -180,11 +148,9 @@ def cast_world():
             y = py + sin_a * depth
 
             if is_wall(x, y):
-
                 wall_depth_buffer[ray] = depth
 
                 depth_corr = max(0.1, depth * math.cos(pa - angle))
-
                 shade = max(0, min(120, int(255 / (1 + depth_corr * 0.02))))
                 color = (shade, 0, 0)
 
@@ -194,19 +160,16 @@ def cast_world():
                 pygame.draw.rect(
                     screen,
                     color,
-                    (col,
-                     HEIGHT // 2 - wall_h // 2,
-                     WIDTH // RAYS + 1,
-                     wall_h)
+                    (col, HEIGHT // 2 - wall_h // 2,
+                     WIDTH // RAYS + 1, wall_h)
                 )
                 break
 
 
 # -----------------------------
-# DRAW Ls
+# L DRAW
 # -----------------------------
 def draw_Ls():
-
     for chunk in L_objects.values():
         for lx, ly in chunk:
 
@@ -214,10 +177,8 @@ def draw_Ls():
             dy = ly - py
 
             dist = math.hypot(dx, dy)
-            if dist < 0.1:
-                continue
-
             angle = math.atan2(dy, dx)
+
             rel = (angle - pa + math.pi) % (2 * math.pi) - math.pi
 
             if abs(rel) > FOV / 2:
@@ -237,111 +198,22 @@ def draw_Ls():
 
             col = int(ray * (WIDTH / RAYS))
 
-            shade = max(50, min(120, int(255 / (1 + depth_corr * 0.02))))
-            color = (shade // 3, 0, 0)
+            brightness = max(40, min(120, int(255 / (1 + depth_corr * 0.02))))
+            color = (brightness // 3, 0, 0)
 
             base = font.render("L", True, color)
-
             w = max(2, size // 3)
             h = max(2, size)
 
             sprite = pygame.transform.scale(base, (w, h))
-
             screen.blit(sprite, (col - w // 2, HEIGHT // 2 - h // 2))
 
 
 # -----------------------------
-# STALKER AI
-# -----------------------------
-def update_stalker():
-    global stalker_x, stalker_y, stalker_lock, glitch_timer
-
-    if stalker_lock:
-        glitch_timer += 1
-        return
-
-    dx = px - stalker_x
-    dy = py - stalker_y
-
-    dist = math.hypot(dx, dy)
-
-    if dist < 10:
-        stalker_lock = True
-        glitch_timer = 0
-        return
-
-    dx /= dist
-    dy /= dist
-
-    speed = stalker_speed
-    if dist < 80:
-        speed = 0.9
-    elif dist < 150:
-        speed = 0.6
-
-    nx = stalker_x + dx * speed
-    ny = stalker_y + dy * speed
-
-    if not is_wall(nx, stalker_y):
-        stalker_x = nx
-    if not is_wall(stalker_x, ny):
-        stalker_y = ny
-
-
-def draw_stalker():
-
-    if stalker_lock:
-        screen.fill((0, 0, 0))
-
-        for _ in range(25):
-            x = random.randint(0, WIDTH)
-            y = random.randint(0, HEIGHT)
-            size = random.randint(80, 500)
-
-            surf = font.render("STALKER", True, (255, 0, 0))
-            surf = pygame.transform.scale(surf, (size, size // 2))
-
-            screen.blit(surf, (x, y))
-
-        if glitch_timer > 180:
-            pygame.quit()
-            sys.exit()
-
-        return
-
-    dx = stalker_x - px
-    dy = stalker_y - py
-
-    dist = math.hypot(dx, dy)
-
-    angle = math.atan2(dy, dx)
-    rel = (angle - pa + math.pi) % (2 * math.pi) - math.pi
-
-    if abs(rel) > FOV / 2:
-        return
-
-    ray = int((rel + FOV / 2) / FOV * RAYS)
-    if ray < 0 or ray >= RAYS:
-        return
-
-    depth_corr = max(1.0, dist)
-
-    size = int(2500 / depth_corr)
-    size = max(40, min(size, 400))
-
-    col = int(ray * (WIDTH / RAYS))
-
-    surf = font.render("STALKER", True, (255, 0, 0))
-    surf = pygame.transform.scale(surf, (size, size // 2))
-
-    screen.blit(surf, (col - size // 2, HEIGHT // 2 - size // 4))
-
-
-# -----------------------------
-# INTERACTION
+# INTERACTION (FIXED RESET)
 # -----------------------------
 def check_L_interaction():
-    global L_count
+    global L_count, star_power, stars, collapse
 
     for chunk in list(L_objects.keys()):
         new_list = []
@@ -349,10 +221,65 @@ def check_L_interaction():
         for lx, ly in L_objects[chunk]:
             if math.hypot(lx - px, ly - py) < 15:
                 L_count += 1
+
+                # FULL RESET (NOW ACTUALLY WORKS)
+                star_power = 0.0
+                stars.clear()
+                collapse = False
+                collapse_timer = 0
+
             else:
                 new_list.append((lx, ly))
 
         L_objects[chunk] = new_list
+
+
+# -----------------------------
+# STARS + COLLAPSE
+# -----------------------------
+def update_stars():
+    global star_power, collapse, collapse_timer, rotation
+
+    if not collapse:
+        star_power += 0.002
+
+        # STAR SPAWN (ONLY PLACE IT HAPPENS)
+        if random.random() < 0.002 + star_power * 0.02:
+            stars.append([
+                random.randint(0, WIDTH),
+                random.randint(0, HEIGHT),
+                random.randint(1, 3)
+            ])
+
+    if star_power > 8:
+        collapse = True
+
+    if collapse:
+        collapse_timer += 1
+        rotation += 0.04
+
+
+def draw_stars():
+    if collapse:
+        screen.fill((0, 0, 0))
+
+        for s in stars:
+            x = int(s[0] + math.sin(rotation) * 80)
+            y = int(s[1] + math.cos(rotation) * 80)
+
+            pygame.draw.circle(screen, (255, 255, 255), (x, y), s[2])
+
+        if collapse_timer > 180:
+            pygame.quit()
+            sys.exit()
+
+        return
+
+    for s in stars:
+        brightness = min(255, 200 + int(star_power * 10))
+        color = (brightness, brightness, brightness)
+
+        pygame.draw.circle(screen, color, (s[0], s[1]), s[2])
 
 
 # -----------------------------
@@ -378,11 +305,15 @@ while running:
     move()
 
     update_Ls()
-    update_stalker()
+    update_stars()
 
-    cast_world()
-    draw_stalker()
-    draw_Ls()
+    screen.fill((0, 0, 0))
+
+    if not collapse:
+        cast_world()
+        draw_Ls()
+
+    draw_stars()
     check_L_interaction()
     draw_ui()
 
