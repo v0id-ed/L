@@ -28,6 +28,12 @@ pa = 0.0
 MOVE_SPEED = 0.6
 ROT_SPEED = 0.02
 
+# camera bob
+bob_phase = 0.0
+bob_offset = 0
+BOB_SPEED = 0.18
+BOB_AMOUNT = 6
+
 FOV = math.pi / 3
 RAYS = 120
 MAX_DEPTH = 300
@@ -51,15 +57,6 @@ star_power = 0.0
 collapse = False
 collapse_timer = 0
 rotation = 0.0
-
-
-def spawn_star():
-    if random.random() < 0.002 + star_power * 0.02:
-        stars.append([
-            random.randint(0, WIDTH),
-            random.randint(0, HEIGHT),
-            random.randint(1, 3)
-        ])
 
 
 # -----------------------------
@@ -104,9 +101,10 @@ def update_Ls():
 # MOVEMENT
 # -----------------------------
 def move():
-    global px, py, pa
+    global px, py, pa, bob_phase, bob_offset
 
     keys = pygame.key.get_pressed()
+    moving = False
 
     if keys[pygame.K_LEFT]:
         pa -= ROT_SPEED
@@ -119,14 +117,25 @@ def move():
     if keys[pygame.K_UP]:
         if not is_wall(px + dx, py):
             px += dx
+            moving = True
         if not is_wall(px, py + dy):
             py += dy
+            moving = True
 
     if keys[pygame.K_DOWN]:
         if not is_wall(px - dx, py):
             px -= dx
+            moving = True
         if not is_wall(px, py - dy):
             py -= dy
+            moving = True
+
+    # bobbing
+    if moving:
+        bob_phase += BOB_SPEED
+        bob_offset = math.sin(bob_phase) * BOB_AMOUNT
+    else:
+        bob_offset *= 0.85   # smooth settle when stopping
 
 
 # -----------------------------
@@ -160,7 +169,7 @@ def cast_world():
                 pygame.draw.rect(
                     screen,
                     color,
-                    (col, HEIGHT // 2 - wall_h // 2,
+                    (col, HEIGHT // 2 + bob_offset - wall_h // 2,
                      WIDTH // RAYS + 1, wall_h)
                 )
                 break
@@ -206,14 +215,15 @@ def draw_Ls():
             h = max(2, size)
 
             sprite = pygame.transform.scale(base, (w, h))
-            screen.blit(sprite, (col - w // 2, HEIGHT // 2 - h // 2))
+            screen.blit(sprite, (col - w // 2,
+                     HEIGHT // 2 + bob_offset - h // 2))
 
 
 # -----------------------------
 # INTERACTION (FIXED RESET)
 # -----------------------------
 def check_L_interaction():
-    global L_count, star_power, stars, collapse
+    global L_count, star_power, stars, collapse, collapse_timer
 
     for chunk in list(L_objects.keys()):
         new_list = []
@@ -233,7 +243,6 @@ def check_L_interaction():
 
         L_objects[chunk] = new_list
 
-
 # -----------------------------
 # STARS + COLLAPSE
 # -----------------------------
@@ -243,7 +252,7 @@ def update_stars():
     if not collapse:
         star_power += 0.002
 
-        # STAR SPAWN (ONLY PLACE IT HAPPENS)
+        # NORMAL IN-GAME STAR SPAWNING
         if random.random() < 0.002 + star_power * 0.02:
             stars.append([
                 random.randint(0, WIDTH),
@@ -251,21 +260,35 @@ def update_stars():
                 random.randint(1, 3)
             ])
 
-    if star_power > 8:
+    # COLLAPSE START
+    if star_power > 8 and not collapse:
         collapse = True
+
+        stars.clear()
+
+        # MASSIVE STAR FIELD FOR FALLING ENDING
+        for _ in range(1200):
+            stars.append([
+                random.randint(-300, WIDTH + 300),
+                random.randint(-300, HEIGHT + 300),
+                random.randint(1, 3)
+            ])
 
     if collapse:
         collapse_timer += 1
-        rotation += 0.04
+        rotation += 0.08
 
 
 def draw_stars():
+
     if collapse:
         screen.fill((0, 0, 0))
 
+        sway = 140
+
         for s in stars:
-            x = int(s[0] + math.sin(rotation) * 80)
-            y = int(s[1] + math.cos(rotation) * 80)
+            x = int(s[0] + math.sin(rotation) * sway)
+            y = int(s[1] + math.cos(rotation * 1.2) * sway)
 
             pygame.draw.circle(screen, (255, 255, 255), (x, y), s[2])
 
@@ -275,6 +298,7 @@ def draw_stars():
 
         return
 
+    # NORMAL STARS
     for s in stars:
         brightness = min(255, 200 + int(star_power * 10))
         color = (brightness, brightness, brightness)
